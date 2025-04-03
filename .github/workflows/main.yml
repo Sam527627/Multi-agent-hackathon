@@ -1,0 +1,150 @@
+import random
+import time
+from typing import Dict, List
+
+# Base Agent Class
+class Agent:
+    def __init__(self, name: str):
+        self.name = name
+
+    def act(self, data: Dict) -> Dict:
+        raise NotImplementedError("Each agent must implement its own act method.")
+
+# Demand Predictor Agent
+class DemandPredictorAgent(Agent):
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.historical_sales = {"product_a": [100, 120, 90, 110], "product_b": [50, 60, 45, 55]}
+
+    def predict_demand(self, product: str) -> int:
+        # Simple moving average for demo purposes
+        sales = self.historical_sales.get(product, [0])
+        return sum(sales) // len(sales) + random.randint(-10, 10)
+
+    def act(self, data: Dict) -> Dict:
+        product = data.get("product")
+        predicted_demand = self.predict_demand(product)
+        print(f"{self.name}: Predicted demand for {product} is {predicted_demand} units.")
+        return {"predicted_demand": predicted_demand}
+
+# Store Agent
+class StoreAgent(Agent):
+    def __init__(self, name: str, inventory: Dict[str, int]):
+        super().__init__(name)
+        self.inventory = inventory
+
+    def act(self, data: Dict) -> Dict:
+        product = data.get("product")
+        predicted_demand = data.get("predicted_demand", 0)
+        current_stock = self.inventory.get(product, 0)
+        
+        if current_stock < predicted_demand:
+            shortage = predicted_demand - current_stock
+            print(f"{self.name}: Shortage detected for {product}. Requesting {shortage} units.")
+            return {"request_units": shortage, "product": product}
+        else:
+            print(f"{self.name}: Sufficient stock for {product} (Current: {current_stock}).")
+            return {}
+
+# Warehouse Agent
+class WarehouseAgent(Agent):
+    def __init__(self, name: str, inventory: Dict[str, int]):
+        super().__init__(name)
+        self.inventory = inventory
+
+    def act(self, data: Dict) -> Dict:
+        product = data.get("product")
+        request_units = data.get("request_units", 0)
+        available_stock = self.inventory.get(product, 0)
+
+        if available_stock >= request_units:
+            self.inventory[product] -= request_units
+            print(f"{self.name}: Fulfilling {request_units} units of {product} to store.")
+            return {"shipped_units": request_units, "product": product}
+        else:
+            print(f"{self.name}: Insufficient stock for {product}. Requesting from supplier.")
+            return {"supplier_request": request_units - available_stock, "product": product}
+
+# Supplier Agent
+class SupplierAgent(Agent):
+    def act(self, data: Dict) -> Dict:
+        product = data.get("product")
+        supplier_request = data.get("supplier_request", 0)
+        print(f"{self.name}: Supplying {supplier_request} units of {product} to warehouse.")
+        return {"supplied_units": supplier_request, "product": product}
+
+# Pricing Agent
+class PricingAgent(Agent):
+    def __init__(self, name: str, base_prices: Dict[str, float]):
+        super().__init__(name)
+        self.base_prices = base_prices
+
+    def act(self, data: Dict) -> Dict:
+        product = data.get("product")
+        current_stock = data.get("current_stock", 0)
+        predicted_demand = data.get("predicted_demand", 0)
+
+        if current_stock > predicted_demand * 1.5:  # Overstock condition
+            discount = self.base_prices[product] * 0.2
+            new_price = self.base_prices[product] - discount
+            print(f"{self.name}: Overstock detected for {product}. Reducing price to {new_price:.2f}.")
+            return {"new_price": new_price, "product": product}
+        else:
+            print(f"{self.name}: No price adjustment needed for {product}.")
+            return {"new_price": self.base_prices[product], "product": product}
+
+# Multi-Agent System Coordinator
+class InventoryOptimizer:
+    def __init__(self):
+        self.agents = {
+            "demand_predictor": DemandPredictorAgent("Demand Predictor"),
+            "store": StoreAgent("Store 1", {"product_a": 50, "product_b": 30}),
+            "warehouse": WarehouseAgent("Warehouse 1", {"product_a": 200, "product_b": 100}),
+            "supplier": SupplierAgent("Supplier 1"),
+            "pricing": PricingAgent("Pricing Agent", {"product_a": 10.0, "product_b": 5.0})
+        }
+
+    def run(self, product: str):
+        print(f"\n=== Optimizing inventory for {product} ===\n")
+        
+        # Step 1: Predict demand
+        data = {"product": product}
+        data = self.agents["demand_predictor"].act(data)
+
+        # Step 2: Store checks inventory
+        data["current_stock"] = self.agents["store"].inventory.get(product, 0)
+        store_response = self.agents["store"].act(data)
+        data.update(store_response)
+
+        # Step 3: Warehouse fulfills request
+        if "request_units" in data:
+            warehouse_response = self.agents["warehouse"].act(data)
+            data.update(warehouse_response)
+
+            # Step 4: Supplier fulfills if warehouse is short
+            if "supplier_request" in data:
+                supplier_response = self.agents["supplier"].act(data)
+                data.update(supplier_response)
+                # Simulate warehouse receiving supply
+                self.agents["warehouse"].inventory[product] += supplier_response["supplied_units"]
+
+            # Update store inventory
+            if "shipped_units" in warehouse_response:
+                self.agents["store"].inventory[product] += warehouse_response["shipped_units"]
+
+        # Step 5: Pricing optimization
+        pricing_response = self.agents["pricing"].act(data)
+        data.update(pricing_response)
+
+        # Summary
+        print(f"\nSummary for {product}:")
+        print(f"Store Inventory: {self.agents['store'].inventory[product]} units")
+        print(f"Warehouse Inventory: {self.agents['warehouse'].inventory[product]} units")
+        print(f"Price: {data['new_price']:.2f}")
+
+# Run the system
+if __name__ == "__main__":
+    optimizer = InventoryOptimizer()
+    optimizer.run("product_a")
+    time.sleep(2)  # Pause for readability
+    optimizer.run("product_b")
